@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Home,
   Book,
@@ -11,80 +11,157 @@ import {
   IndianRupee,
 } from "lucide-react";
 import { useCurrency } from "../context/CurrencyContext";
-import axios from "axios";
+import api from "../api/axios";
 
 export default function Sidebar({ onNavigate }) {
   const { currency, toggleCurrency } = useCurrency();
   const [walletBalance, setWalletBalance] = useState(0);
   const [expBalance, setExpBalance] = useState(0);
-  const token = localStorage.getItem("token");
-  const location = useLocation();
+  const [user, setUser] = useState(
+    JSON.parse(localStorage.getItem("userData") || "null")
+  );
 
-  // ✅ Fetch wallet balance
+  const token = localStorage.getItem("userToken");
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  /* ---------------------------------------------------------
+   🧑 Fetch user profile
+  --------------------------------------------------------- */
   useEffect(() => {
-    const fetchWallet = async () => {
+    if (!token) return;
+
+    const fetchUser = async () => {
       try {
-        const res = await axios.get("http://localhost:5000/api/wallet/balance", {
+        const res = await api.get("/auth/me", {
           headers: { Authorization: `Bearer ${token}` },
         });
-        setWalletBalance(res.data.walletBalance || 0);
-      } catch (err) {
-        console.error("Error fetching wallet:", err.response?.data || err.message);
+        setUser(res.data.user);
+        localStorage.setItem("userData", JSON.stringify(res.data.user));
+      } catch {
+        console.warn("⚠️ /auth/me missing — using local cache");
       }
     };
-    fetchWallet();
-    const interval = setInterval(fetchWallet, 10000);
-    return () => clearInterval(interval);
+    fetchUser();
   }, [token]);
 
-  // 💱 Currency conversion
-  const usdRate = 83;
-  const convertedBalance =
-    currency === "USD"
-      ? (walletBalance / usdRate).toFixed(2)
-      : walletBalance.toFixed(2);
-  const convertedExp =
-    currency === "USD"
-      ? (expBalance / usdRate).toFixed(2)
-      : expBalance.toFixed(2);
+  /* ---------------------------------------------------------
+   💰 Fetch wallet + exposure + auto-sync
+  --------------------------------------------------------- */
+  useEffect(() => {
+    if (!token) return;
 
-  // ✅ Nav items
+    const fetchWallet = async () => {
+      try {
+        const res = await api.get("/wallet/balance", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = res.data || {};
+        setWalletBalance(data.walletBalance || 0);
+        setExpBalance(data.exposure || 0);
+      } catch (err) {
+        console.error(
+          "❌ Wallet fetch error:",
+          err.response?.data || err.message
+        );
+      }
+    };
+
+    fetchWallet();
+
+    const bc = new BroadcastChannel("wallet_channel");
+    bc.onmessage = (msg) => {
+      if (msg.data === "update_wallet") fetchWallet();
+    };
+
+    const interval = setInterval(fetchWallet, 15000);
+
+    return () => {
+      bc.close();
+      clearInterval(interval);
+    };
+  }, [token]);
+
+  /* ---------------------------------------------------------
+   💱 Currency Conversion
+  --------------------------------------------------------- */
+  const usdRate = 83;
+  const convert = (value = 0) =>
+    currency === "USD" ? (value / usdRate).toFixed(2) : value.toFixed(2);
+
+  /* ---------------------------------------------------------
+   📋 Navigation Links
+  --------------------------------------------------------- */
   const links = [
     { to: "/", label: "Home", icon: <Home size={18} /> },
     { to: "/bets", label: "Bets", icon: <Book size={18} /> },
     { to: "/history", label: "Toss History", icon: <History size={18} /> },
-    { to: "/dw", label: "D / W History", icon: <Wallet size={18} /> },
     { to: "/rules", label: "Rules", icon: <Settings size={18} /> },
-    { to: "/wallet", label: "Deposit / Withdraw", icon: <Wallet size={18} /> },
+    { to: "/wallet", label: "Wallet History", icon: <Wallet size={18} /> },
   ];
 
+  /* ---------------------------------------------------------
+   🚪 Logout
+  --------------------------------------------------------- */
+  const handleLogout = () => {
+    localStorage.removeItem("userToken");
+    localStorage.removeItem("userData");
+    navigate("/login");
+  };
+
+  /* ---------------------------------------------------------
+   💬 WhatsApp Redirect
+  --------------------------------------------------------- */
+  const handleWhatsAppRedirect = () => {
+    const phoneNumber = "918449060585"; // ✅ Your WhatsApp number
+    const message = "Hello! I need help regarding my wallet or account.";
+    window.open(
+      `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`,
+      "_blank"
+    );
+  };
+
+  /* ---------------------------------------------------------
+   🖼 UI Rendering
+  --------------------------------------------------------- */
   return (
-    <div className="h-full flex flex-col bg-cyan-600 text-white p-5 overflow-y-auto">
-      {/* 👤 Profile Section */}
-      <div className="flex flex-col items-center mb-6">
+    <aside className="h-full flex flex-col bg-cyan-600 text-white sm:p-5 p-4 min-w-[230px] sm:min-w-[250px]">
+      {/* 👤 Profile */}
+      <div className="flex flex-col items-center mb-5">
         <img
-          src="https://i.pravatar.cc/100"
+          src={user?.avatar || "/vite.jpeg"}
           alt="user"
-          className="w-20 h-20 rounded-full border-4 border-white"
+          className="w-20 h-20 rounded-full border-4 border-white shadow-md"
         />
-        <h2 className="mt-3 font-bold text-lg text-center">Friends Toss Book</h2>
-        <p className="text-sm opacity-80">@User</p>
+        <h2 className="mt-3 font-bold text-lg text-center">
+          {user?.name || "Friends Toss Book"}
+        </h2>
+        <p className="text-sm opacity-80">
+          {user?.name ? `@${user.name}` : "@User"}
+        </p>
       </div>
 
-      {/* 💰 Wallet Info */}
-      <div className="flex justify-between items-center text-sm mb-5 px-3 py-2 rounded-lg bg-cyan-700">
-        <div>
-          BAL: {currency === "INR" ? "₹" : "$"}
-          {convertedBalance}
+      {/* 💰 Wallet Display */}
+      <div className="bg-cyan-700 text-sm mb-4 px-3 py-2 rounded-lg shadow-inner space-y-1">
+        <div className="flex justify-between">
+          <span>
+            BAL: {currency === "INR" ? "₹" : "$"}
+            {convert(walletBalance)}
+          </span>
+          <span>
+            EXP: {currency === "INR" ? "₹" : "$"}
+            {convert(expBalance)}
+          </span>
         </div>
-        <div>
-          EXP: {currency === "INR" ? "₹" : "$"}
-          {convertedExp}
+        <div className="text-xs text-right text-cyan-100">
+          Available:{" "}
+          {currency === "INR" ? "₹" : "$"}
+          {convert(walletBalance - expBalance)}
         </div>
       </div>
 
       {/* 🧭 Nav Links */}
-      <nav className="flex-1 space-y-2">
+      <nav className="flex-1 overflow-y-auto space-y-2 pb-4">
         {links.map((item) => (
           <Link
             key={item.to}
@@ -92,40 +169,58 @@ export default function Sidebar({ onNavigate }) {
             onClick={onNavigate}
             className={`flex items-center gap-2 px-3 py-2 rounded-md transition-all ${
               location.pathname === item.to
-                ? "bg-cyan-800 font-semibold"
+                ? "bg-cyan-800 font-semibold shadow-sm"
                 : "hover:bg-cyan-700"
             }`}
           >
             {item.icon}
-            {item.label}
+            <span className="text-sm sm:text-base">{item.label}</span>
           </Link>
         ))}
       </nav>
 
-      {/* 💱 Currency Switch */}
-      <button
-        onClick={toggleCurrency}
-        className="mt-5 flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-cyan-700 hover:bg-cyan-800 transition-all"
-      >
-        {currency === "INR" ? (
-          <>
-            <IndianRupee size={18} /> INR
-          </>
-        ) : (
-          <>
-            <DollarSign size={18} /> USD
-          </>
-        )}
-      </button>
+      {/* ⚙️ Footer */}
+      <div className="sticky bottom-0 bg-cyan-600 pt-3 pb-2 mt-2 border-t border-cyan-700">
+        {/* 💬 WhatsApp Button */}
+        <button
+          onClick={handleWhatsAppRedirect}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-green-600 hover:bg-green-700 transition-all text-sm sm:text-base mb-2 font-semibold shadow-md"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 448 512"
+            fill="white"
+            className="w-4 h-4"
+          >
+            <path d="M380.9 97.1C339-2.9 214.6-30.5 123 38.6c-59.6 44.2-87.8 121.6-68.5 197.1L24 480l248.6-64.7c79.5 17.6 162.5-22.9 200.3-96.9 41.9-81.2 14.5-180.8-62-221.3zM220.6 398.2l-66.1 17.2 17.5-64.1C130 312.1 97.1 260.9 97.1 202.4c0-87 70.6-157.6 157.6-157.6 87 0 157.6 70.6 157.6 157.6 0 87-70.6 157.6-157.6 157.6-29.7 0-58.1-8.3-83.1-23.6l-11 4z" />
+          </svg>
+          Whatsapp Now
+        </button>
 
-      {/* 🚪 Logout */}
-      <Link
-        to="/logout"
-        onClick={onNavigate}
-        className="mt-6 flex items-center gap-2 px-3 py-2 rounded-md bg-red-600 hover:bg-red-700 transition-all"
-      >
-        <LogOut size={18} /> Log out
-      </Link>
-    </div>
+        {/* 💱 Currency Switch */}
+        <button
+          onClick={toggleCurrency}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-cyan-700 hover:bg-cyan-800 transition-all text-sm sm:text-base mb-2"
+        >
+          {currency === "INR" ? (
+            <>
+              <IndianRupee size={18} /> INR
+            </>
+          ) : (
+            <>
+              <DollarSign size={18} /> USD
+            </>
+          )}
+        </button>
+
+        {/* 🚪 Logout */}
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-red-600 hover:bg-red-700 transition-all text-sm sm:text-base"
+        >
+          <LogOut size={18} /> Log out
+        </button>
+      </div>
+    </aside>
   );
 }
