@@ -15,24 +15,17 @@ const norm = (s = "") => String(s).trim().toLowerCase();
 ------------------------------------------------------- */
 export const createMatch = async (req, res, next) => {
   try {
-    const { title, startAt, lastBetTime, minBet, maxBet } = req.body;
+    const { title, lastBetTime, minBet, maxBet } = req.body;
 
-    if (!title || !startAt || !lastBetTime) {
+    if (!title || !lastBetTime) {
       return res
         .status(400)
-        .json({ message: "Title, startAt and lastBetTime are required" });
+        .json({ message: "Title and lastBetTime are required" });
     }
 
-    const start = new Date(startAt);
-    const close = new Date(lastBetTime);
-
-    if (isNaN(start) || isNaN(close)) {
-      return res.status(400).json({ message: "Invalid date provided" });
-    }
-    if (close >= start) {
-      return res
-        .status(400)
-        .json({ message: "lastBetTime must be before startAt" });
+    const liveTime = new Date(lastBetTime);
+    if (isNaN(liveTime)) {
+      return res.status(400).json({ message: "Invalid date format for lastBetTime" });
     }
 
     // Parse teams
@@ -42,9 +35,9 @@ export const createMatch = async (req, res, next) => {
       .filter(Boolean);
 
     if (rawTeams.length !== 2) {
-      return res
-        .status(400)
-        .json({ message: "Title must be in format: 'TeamA vs TeamB'" });
+      return res.status(400).json({
+        message: "Title must be in format: 'TeamA vs TeamB'",
+      });
     }
 
     const teams = rawTeams.map((t) => ({ full: t, short: toShort(t) }));
@@ -52,8 +45,7 @@ export const createMatch = async (req, res, next) => {
 
     const match = await Match.create({
       title: `${teams[0].full} vs ${teams[1].full}`,
-      startAt: start,
-      lastBetTime: close,
+      lastBetTime: liveTime, // single decisive time
       odds,
       teams,
       status: "UPCOMING",
@@ -76,7 +68,7 @@ export const listMatches = async (req, res, next) => {
   try {
     const { status } = req.query;
     const filter = status ? { status } : {};
-    const matches = await Match.find(filter).sort({ startAt: -1 });
+    const matches = await Match.find(filter).sort({ lastBetTime: -1 });
     res.json({ matches });
   } catch (err) {
     next(err);
@@ -88,19 +80,11 @@ export const listMatches = async (req, res, next) => {
 ------------------------------------------------------- */
 export const updateMatch = async (req, res, next) => {
   try {
-    if (req.body.startAt || req.body.lastBetTime) {
-      const start = req.body.startAt ? new Date(req.body.startAt) : null;
-      const close = req.body.lastBetTime ? new Date(req.body.lastBetTime) : null;
-      if (start && isNaN(start)) return res.status(400).json({ message: "Invalid startAt" });
-      if (close && isNaN(close)) return res.status(400).json({ message: "Invalid lastBetTime" });
-      if (start && close && close >= start)
-        return res.status(400).json({ message: "lastBetTime must be before startAt" });
-    }
-
     const updated = await Match.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,
     });
+
     if (!updated) return res.status(404).json({ message: "Match not found" });
 
     res.json({ message: "✅ Match updated", match: updated });
@@ -124,9 +108,7 @@ export const updateMatchStatus = async (req, res, next) => {
 
     const cur = String(match.status || "").toUpperCase();
     if (["COMPLETED", "CANCELLED"].includes(cur)) {
-      return res
-        .status(400)
-        .json({ message: `Match already ${cur.toLowerCase()}` });
+      return res.status(400).json({ message: `Match already ${cur.toLowerCase()}` });
     }
 
     match.status = status;
@@ -141,7 +123,6 @@ export const updateMatchStatus = async (req, res, next) => {
 
 /* -------------------------------------------------------
  🏁 PUBLISH or UPDATE RESULT (Admin)
- Render-safe: no sessions or transactions
 ------------------------------------------------------- */
 export const publishOrUpdateResult = async (req, res) => {
   try {
@@ -153,7 +134,6 @@ export const publishOrUpdateResult = async (req, res) => {
     const match = await Match.findById(id);
     if (!match) return res.status(404).json({ message: "Match not found" });
 
-    /* Normalize result & team names */
     const normalizedResult = norm(result);
     let teams;
     if (Array.isArray(match.teams) && match.teams.length === 2) {
@@ -189,7 +169,7 @@ export const publishOrUpdateResult = async (req, res) => {
       });
     }
 
-    /* 1️⃣ Reverse old settlement if any */
+    /* Reverse old settlement if any */
     const hadResultBefore =
       !!match.result && !["PENDING", "DRAW"].includes(match.result);
 
@@ -238,16 +218,15 @@ export const publishOrUpdateResult = async (req, res) => {
       console.log(`🔄 Reversed previous settlements: ${reversed}`);
     }
 
-    /* 2️⃣ Apply the new result & settle */
-    match.result = winner;              // "DRAW" ya team (lowercase full)
-    match.status = "COMPLETED";         // ✅ enum-safe (RESULT_DECLARED nahi)
+    /* Apply the new result & settle */
+    match.result = winner;
+    match.status = "COMPLETED";
     await match.save();
 
     const bets = await Bet.find({ match: id, status: "PENDING" });
     let wins = 0, losses = 0, refunds = 0;
 
     for (const b of bets) {
-      if (!b || (!b.team && !b.side)) continue; // guard
       const user = await User.findById(b.user);
       if (!user) continue;
 
@@ -257,7 +236,6 @@ export const publishOrUpdateResult = async (req, res) => {
         b.status = "REFUNDED";
         b.winAmount = 0;
         refunds++;
-
         await user.save();
         await b.save();
         await Transaction.create({
@@ -275,7 +253,6 @@ export const publishOrUpdateResult = async (req, res) => {
           b.status = "WON";
           b.winAmount = credit;
           wins++;
-
           await user.save();
           await b.save();
           await Transaction.create({
@@ -305,6 +282,9 @@ export const publishOrUpdateResult = async (req, res) => {
     console.error("❌ publishOrUpdateResult error:", err?.message || err);
     res
       .status(500)
-      .json({ message: "Internal Server Error", error: err?.message || String(err) });
+      .json({
+        message: "Internal Server Error",
+        error: err?.message || String(err),
+      });
   }
 };

@@ -2,13 +2,13 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Home,
-  Book,
   History,
   Wallet,
   Settings,
   LogOut,
   DollarSign,
   IndianRupee,
+  Lock,
 } from "lucide-react";
 import { useCurrency } from "../context/CurrencyContext";
 import api from "../api/axios";
@@ -94,10 +94,10 @@ export default function Sidebar({ onNavigate }) {
   --------------------------------------------------------- */
   const links = [
     { to: "/", label: "Home", icon: <Home size={18} /> },
-    { to: "/bets", label: "Bets", icon: <Book size={18} /> },
-    { to: "/history", label: "Toss History", icon: <History size={18} /> },
-    { to: "/rules", label: "Rules", icon: <Settings size={18} /> },
+    { to: "/Bets", label: "Toss History", icon: <History size={18} /> },
     { to: "/wallet", label: "Wallet History", icon: <Wallet size={18} /> },
+    { to: "/change-password", label: "Change Password", icon: <Lock size={18} /> }, // ✅ added
+    { to: "/rules", label: "Rules", icon: <Settings size={18} /> },
   ];
 
   /* ---------------------------------------------------------
@@ -113,7 +113,7 @@ export default function Sidebar({ onNavigate }) {
    💬 WhatsApp Redirect
   --------------------------------------------------------- */
   const handleWhatsAppRedirect = () => {
-    const phoneNumber = "918449060585"; // ✅ Your WhatsApp number
+    const phoneNumber = "918449060585";
     const message = "Hello! I need help regarding my wallet or account.";
     window.open(
       `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`,
@@ -142,8 +142,8 @@ export default function Sidebar({ onNavigate }) {
       </div>
 
       {/* 💰 Wallet Display */}
-      <div className="bg-cyan-700 text-sm mb-4 px-3 py-2 rounded-lg shadow-inner space-y-1">
-        <div className="flex justify-between">
+      <div className="bg-cyan-700 text-sm mb-4 px-3 py-2 rounded-lg shadow-inner">
+        <div className="flex justify-between font-semibold">
           <span>
             BAL: {currency === "INR" ? "₹" : "$"}
             {convert(walletBalance)}
@@ -152,11 +152,6 @@ export default function Sidebar({ onNavigate }) {
             EXP: {currency === "INR" ? "₹" : "$"}
             {convert(expBalance)}
           </span>
-        </div>
-        <div className="text-xs text-right text-cyan-100">
-          Available:{" "}
-          {currency === "INR" ? "₹" : "$"}
-          {convert(walletBalance - expBalance)}
         </div>
       </div>
 
@@ -181,7 +176,6 @@ export default function Sidebar({ onNavigate }) {
 
       {/* ⚙️ Footer */}
       <div className="sticky bottom-0 bg-cyan-600 pt-3 pb-2 mt-2 border-t border-cyan-700">
-        {/* 💬 WhatsApp Button */}
         <button
           onClick={handleWhatsAppRedirect}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-green-600 hover:bg-green-700 transition-all text-sm sm:text-base mb-2 font-semibold shadow-md"
@@ -197,7 +191,6 @@ export default function Sidebar({ onNavigate }) {
           Whatsapp Now
         </button>
 
-        {/* 💱 Currency Switch */}
         <button
           onClick={toggleCurrency}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-cyan-700 hover:bg-cyan-800 transition-all text-sm sm:text-base mb-2"
@@ -213,7 +206,6 @@ export default function Sidebar({ onNavigate }) {
           )}
         </button>
 
-        {/* 🚪 Logout */}
         <button
           onClick={handleLogout}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-red-600 hover:bg-red-700 transition-all text-sm sm:text-base"

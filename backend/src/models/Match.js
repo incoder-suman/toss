@@ -16,7 +16,7 @@ const teamSchema = new mongoose.Schema(
           .replace(/\s+/g, " ")
           .split(" ")
           .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-          .join(" "), // Auto-capitalize each word
+          .join(" "),
     },
     short: {
       type: String,
@@ -45,35 +45,24 @@ const matchSchema = new mongoose.Schema(
           .join(" "),
     },
 
-    // 🕒 Match start time
+    // 🕒 Optional (agar aage kabhi dubaara chahiye ho)
     startAt: {
       type: Date,
-      required: [true, "Match start time is required"],
+      required: false,
     },
 
-    // ⏳ Last time a user can place a bet
+    // ⏳ Single decisive time: iske baad bet band -> LOCKED
     lastBetTime: {
       type: Date,
       required: [true, "Last bet time is required"],
-      validate: {
-        validator: function (v) {
-          return !this.startAt || v < this.startAt;
-        },
-        message: "Last bet time must be before match start time",
-      },
+      index: true,
+      // ❌ NO custom validator anymore — simple & robust
     },
 
     // 📺 Status control
     status: {
       type: String,
-      enum: [
-        "UPCOMING",
-        "LIVE",
-        "LOCKED",
-        "RESULT_DECLARED",
-        "COMPLETED",
-        "CANCELLED",
-      ],
+      enum: ["UPCOMING", "LIVE", "LOCKED", "COMPLETED", "CANCELLED"],
       default: "UPCOMING",
     },
 
@@ -123,7 +112,7 @@ const matchSchema = new mongoose.Schema(
 );
 
 /* -------------------------------------------------------
- ⏰ Auto-lock middleware (runs on find & findOne)
+ ⏰ Auto-lock middleware (runs on find/findOne)
 ------------------------------------------------------- */
 async function autoLock(docOrDocs) {
   const now = new Date();
@@ -140,12 +129,11 @@ async function autoLock(docOrDocs) {
     }
   }
 }
-
 matchSchema.post("find", autoLock);
 matchSchema.post("findOne", autoLock);
 
 /* -------------------------------------------------------
- 🧠 Auto-generate title if missing
+ 🧠 Auto title if missing
 ------------------------------------------------------- */
 matchSchema.pre("save", function (next) {
   if (this.teams?.length === 2 && !this.title) {
@@ -154,4 +142,10 @@ matchSchema.pre("save", function (next) {
   next();
 });
 
-export default mongoose.models.Match || mongoose.model("Match", matchSchema);
+/* -------------------------------------------------------
+ 🚀 Safe export — prevent cached old schema on hot reload
+------------------------------------------------------- */
+if (mongoose.models.Match) {
+  delete mongoose.models.Match;
+}
+export default mongoose.model("Match", matchSchema);
